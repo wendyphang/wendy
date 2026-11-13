@@ -470,13 +470,20 @@ DATA.forEach(d => { d.ck = d.plat + '|' + d.competitor; });
 function fillComps() {
   const keep = $('fComp').value, seen = {};
   $('fComp').innerHTML = '<option value="">全部 Competitor</option>';
+  // "全部 Facebook" / "全部 Instagram": same as the platform buttons above
+  const order = { IG: 0, FB: 1, XHS: 2 };
+  [...new Set(DATA.map(d => d.plat))].sort((a, b) => (order[a] ?? 9) - (order[b] ?? 9)).forEach(p => {
+    const o = document.createElement('option'); o.value = 'P:' + p;
+    o.textContent = '全部 ' + (PLAT_LABEL[p] || p);
+    $('fComp').appendChild(o);
+  });
   DATA.filter(d => !curPlat || d.plat === curPlat).forEach(d => { seen[d.ck] = d; });
   Object.values(seen).sort((a, b) => (a.plat + a.name).localeCompare(b.plat + b.name)).forEach(d => {
     const o = document.createElement('option'); o.value = d.ck;
     o.textContent = '@' + d.name + (curPlat ? '' : ' · ' + (PLAT_LABEL[d.plat] || d.plat));
     $('fComp').appendChild(o);
   });
-  $('fComp').value = seen[keep] ? keep : '';
+  $('fComp').value = seen[keep] ? keep : (curPlat ? 'P:' + curPlat : '');
 }
 fillComps();
 
@@ -503,7 +510,7 @@ function matchQ(d) {
 }
 
 function basePool() {
-  const c = $('fComp').value;
+  const c = $('fComp').value.startsWith('P:') ? '' : $('fComp').value;
   return DATA.filter(d => (!curPlat || d.plat === curPlat) && (!c || d.ck === c) && (!videoOnly || d.video)
     && matchQ(d) && PRESETS.every(p => !presetOn[p.k] || p.f(d)));
 }
@@ -736,7 +743,12 @@ async function refreshStatuses() {
   } catch (e) {}
 }
 
-['fComp','fSort'].forEach(id => $(id).onchange = () => { shown = PAGE; render(); });
+$('fSort').onchange = () => { shown = PAGE; render(); };
+$('fComp').onchange = () => {
+  const v = $('fComp').value;
+  if (v === '' || v.startsWith('P:')) { curPlat = v.slice(2); fillComps(); }
+  shown = PAGE; render();
+};
 $('fSearch').oninput = () => { shown = PAGE; render(); };
 $('fVideo').onclick = () => { videoOnly = !videoOnly; $('fVideo').classList.toggle('on', videoOnly); shown = PAGE; render(); };
 $('moreBtn').onclick = () => { shown += PAGE; render(); };

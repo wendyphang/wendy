@@ -23,7 +23,7 @@ def handle(name, tracker="IG"):
 
     IG : 'nike' / '@nike' / 'instagram.com/nike/?igsh=..'      -> 'nike'
     FB : 'nike' / 'facebook.com/nike' / 'fb.com/profile.php?id=123' -> 'nike' / '123'
-    XHS: '5d5a56c1...' / 'xiaohongshu.com/user/profile/5d5a56c1...?xsec=..'
+    XHS: '5d5a56c1...' / 'xiaohongshu.com (or rednote.com)/user/profile/5d5a56c1...?xsec=..'
                                                                 -> '5d5a56c1...'
     Returns '' for links that point at a single post instead of a profile.
     """
@@ -52,7 +52,7 @@ def handle(name, tracker="IG"):
                 return ""
             else:
                 n = parts[0]
-        elif "xiaohongshu.com" in host or "xhslink.com" in host:
+        elif any(d in host for d in ("xiaohongshu.com", "xhslink.com", "rednote.com")):
             if "profile" in parts:
                 i = parts.index("profile")
                 n = parts[i + 1] if i + 1 < len(parts) else ""

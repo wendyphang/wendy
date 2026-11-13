@@ -482,7 +482,6 @@ fillComps();
 
 function renderPlats() {
   const plats = [...new Set(DATA.map(d => d.plat))];
-  ['IG', 'FB', 'XHS'].forEach(p => { if (!plats.includes(p)) plats.push(p); });
   const order = { IG: 0, FB: 1, XHS: 2 };
   plats.sort((a, b) => (order[a] ?? 9) - (order[b] ?? 9));
   $('plats').innerHTML = '';

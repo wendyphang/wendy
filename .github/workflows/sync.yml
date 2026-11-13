@@ -12,9 +12,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # IG = Instagram · FB = Facebook 专页 · XHS = 小红书
-        # competitors 表里没有某个平台的账号,那个平台就自动跳过,不花钱。
-        tracker: [IG, FB, XHS]
+        # IG = Instagram · FB = Facebook 专页
+        # (代码也支持小红书:想恢复就在这里加上 XHS,并把 competitors 表里 XHS 那行的 active 打勾)
+        tracker: [IG, FB]
     name: Sync ${{ matrix.tracker }}
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +29,6 @@ jobs:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          XHS_COOKIE: ${{ secrets.XHS_COOKIE }}            # 可选:小红书登录 Cookie,抓得更稳
           MIN_ER: ${{ vars.MIN_ER }}
           MIN_COMMENTS: ${{ vars.MIN_COMMENTS }}
           MIN_ENGAGE: ${{ vars.MIN_ENGAGE }}

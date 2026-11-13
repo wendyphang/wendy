@@ -5,7 +5,10 @@ Viral Posts Dashboard Generator
 Pulls the posts table from Supabase and bakes a static dashboard into
 docs/index.html for GitHub Pages.
 
-- Videos play inline via Instagram's official /embed/ iframe (never expires).
+- One page for Instagram + Facebook + 小红书 (tracker column = platform).
+- IG plays via Instagram's official /embed/ iframe, FB via Facebook's official
+  post/video plugin; 小红书 has no public embed, so it shows the cover image
+  and opens the note on click.
 - Status writes go straight to Supabase from the browser using the anon key
   (baked into the page). RLS + a column-level grant limit anon to updating
   the status column only, so the key is safe to publish — no login needed.
@@ -21,13 +24,14 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
+from platforms import LABEL, handle, profile_url
+
 SUPABASE_URL = (os.environ.get("SUPABASE_URL") or "").rstrip("/")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")  # public key, baked into the page
 # Set on GitHub → Settings → Secrets and variables → Actions → Variables.
 # Falls back to sensible defaults so the page still builds before they're set.
 BRAND = os.environ.get("BRAND") or "爆款雷达"
 SYNC_DAY = os.environ.get("SYNC_DAY") or "每周"
-TRACKER_LABEL = {"IG": BRAND + " 竞对"}
 STATUSES = ["未处理", "拍摄中", "已处理", "跳过"]
 
 # comment-bait CTA patterns — require an explicit gated keyword:
@@ -63,18 +67,6 @@ def fetch_posts(key):
     return rows
 
 
-def _handle(name):
-    """Normalise a competitor handle the way sync_content.py does, so the two
-    scripts always agree on what '@Nike' and 'instagram.com/nike/' mean."""
-    n = (name or "").strip()
-    if "instagram.com" in n:
-        parts = [p for p in urllib.parse.urlparse(n).path.split("/") if p]
-        if not parts or parts[0] in ("p", "reel", "reels", "stories", "tv"):
-            return ""
-        n = parts[0]
-    return n.lstrip("@").strip().lower()
-
-
 def fetch_active_handles(key):
     """Handles ticked `active` in the competitors table.
 
@@ -82,7 +74,7 @@ def fetch_active_handles(key):
     skips filtering, so a key problem or an older schema still builds the full
     dashboard instead of an empty one.
     """
-    url = f"{SUPABASE_URL}/rest/v1/competitors?select=username,active"
+    url = f"{SUPABASE_URL}/rest/v1/competitors?select=username,active,tracker"
     req = urllib.request.Request(url, headers={"apikey": key})
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
@@ -95,8 +87,14 @@ def fetch_active_handles(key):
         print("  WARNING: the competitors table is empty - "
               "showing every account that has posts")
         return None
-    return {h for h in (_handle(r.get("username"))
-                        for r in rows if r.get("active")) if h}
+    out = set()
+    for r in rows:
+        if r.get("active"):
+            t = (r.get("tracker") or "IG").upper()
+            h = handle(r.get("username"), t)
+            if h:
+                out.add((t, h))
+    return out
 
 
 def normalize(r):
@@ -107,10 +105,16 @@ def normalize(r):
     tr = (r.get("transcript") or "")
     brk = (r.get("ai_breakdown") or "")
     er = r.get("engagement_rate") or 0
+    plat = (r.get("tracker") or "IG").upper()
+    comp = r.get("competitor") or ""
     return {
         "id": post_id,
-        "tracker": TRACKER_LABEL.get(r.get("tracker"), r.get("tracker") or "AI Competitors"),
-        "competitor": r.get("competitor") or "",
+        "plat": plat,
+        "tracker": LABEL.get(plat, plat),
+        "competitor": comp,
+        "name": r.get("author_name") or comp,
+        "prof": profile_url(comp, plat),
+        "thumb": r.get("thumbnail_url") or "",
         "caption": caption,
         "transcript": tr if tr not in ("(转录失败)", "(视频不可用)", "(无口播内容)") else "",
         "brk": "" if brk.strip() == "(拆解失败)" else brk[:600],
@@ -123,7 +127,7 @@ def normalize(r):
         "er": round(float(er) * 100, 2),
         "followers": r.get("followers") or 0,
         "date": r.get("post_date") or "",
-        "url": r.get("post_url") or f"https://www.instagram.com/p/{post_id}/",
+        "url": r.get("post_url") or (f"https://www.instagram.com/p/{post_id}/" if plat == "IG" else ""),
         "video": bool(r.get("is_video")) or (r.get("post_type") in ("Video", "Reel")) or bool(r.get("video_url")),
         "ratio": 0,
         "score": float(r.get("viral_score") or 0),
@@ -269,6 +273,36 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .badge.bnew { color: var(--pink); border-color: rgba(255,107,157,.45); background: rgba(255,107,157,.07); }
   .badge.bhorse { color: var(--orange); border-color: rgba(240,163,63,.45); background: rgba(240,163,63,.07); }
   .badge.bbait { color: var(--accent); border-color: rgba(94,161,255,.4); background: rgba(94,161,255,.07); }
+  .badge.pIG  { color: #ff7ab6; border-color: rgba(255,122,182,.45); background: rgba(255,122,182,.07); }
+  .badge.pFB  { color: #6ea8ff; border-color: rgba(110,168,255,.45); background: rgba(110,168,255,.07); }
+  .badge.pXHS { color: #ff5a67; border-color: rgba(255,90,103,.45); background: rgba(255,90,103,.07); }
+  .plats { display: flex; gap: 7px; flex-wrap: wrap; max-width: 1440px; margin: 12px auto 0; }
+  .plat { display: inline-flex; align-items: center; gap: 7px; background: var(--card);
+    border: 1px solid var(--border); color: var(--muted); padding: 7px 13px; border-radius: 999px;
+    font-size: 13px; font-weight: 600; cursor: pointer; user-select: none; transition: all .16s; }
+  .plat:hover { border-color: var(--border-hi); color: var(--text); }
+  .plat .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+  .plat .cnt { font-family: var(--disp); font-size: 11px; color: var(--faint); }
+  .plat.on { color: var(--text); border-color: var(--border-hi); background: var(--card-hi); }
+  .plat.on .cnt { color: var(--muted); }
+  .plat[data-p="IG"] .dot { background: linear-gradient(135deg, #feda75, #d62976, #4f5bd5); }
+  .plat[data-p="FB"] .dot { background: #1877f2; }
+  .plat[data-p="XHS"] .dot { background: #ff2442; }
+  .plat[data-p="IG"].on { border-color: rgba(214,41,118,.6); }
+  .plat[data-p="FB"].on { border-color: rgba(24,119,242,.7); }
+  .plat[data-p="XHS"].on { border-color: rgba(255,36,66,.7); }
+  .embed.xhs a { position: absolute; inset: 0; display: block; }
+  .embed.xhs img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .embed.xhs .play { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    width: 52px; height: 52px; border-radius: 50%; background: rgba(0,0,0,.55);
+    display: grid; place-items: center; color: #fff; pointer-events: none; }
+  .embed.xhs .play .ic { width: 22px; height: 22px; }
+  .embed.xhs .xtitle { position: absolute; inset: auto 0 0 0; padding: 30px 14px 12px;
+    background: linear-gradient(transparent, rgba(0,0,0,.8)); color: #fff; font-weight: 600;
+    font-size: 14px; line-height: 1.4; pointer-events: none; }
+  .embed.xhs .xnone { position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
+    padding: 24px; color: var(--muted); font-size: 15px; font-weight: 600; line-height: 1.5;
+    background: linear-gradient(160deg, #1a1016, #0b0e15); }
   .date { margin-left: auto; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
 
   .nums { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -367,7 +401,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
     <div class="search"><svg class="ic"><use href="#i-search"/></svg>
       <input id="fSearch" placeholder="搜文案 / hashtag / 账号"></div>
-    <select id="fTracker"><option value="">全部 Tracker</option></select>
     <select id="fComp"><option value="">全部 Competitor</option></select>
     <select id="fSort">
       <option value="x">按 爆款倍数 (vs 自家平均)</option>
@@ -381,6 +414,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <a class="btn" href="team.html" target="_top" title="工作台"><svg class="ic"><use href="#i-users"/></svg>工作台</a>
   </div>
+  <div class="plats" id="plats"></div>
   <div class="tabs" id="tabs"></div>
   <div class="chips" id="presets"></div>
   <div class="chips" id="trends"></div>
@@ -390,7 +424,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="empty" id="empty" style="display:none"><svg class="ic"><use href="#i-search"/></svg>没有符合条件的帖子</div>
   <div class="more" id="moreWrap" style="display:none"><button id="moreBtn">载入更多</button></div>
 </main>
-<footer>数据来源 Supabase · __SYNC_DAY__自动更新 · 状态更改即时同步全团队 · 视频由 Instagram 官方 embed 播放</footer>
+<footer>数据来源 Supabase · __SYNC_DAY__自动更新 · 状态更改即时同步全团队 · IG / Facebook 由官方 embed 播放 · 小红书点封面看原笔记</footer>
 <div id="toast"></div>
 <script id="data" type="application/json">__DATA__</script>
 <script>
@@ -403,6 +437,8 @@ const PAGE = 48;
 let shown = PAGE;
 let videoOnly = false;
 let curTab = '全部';
+let curPlat = '';
+const PLAT_LABEL = { IG: 'Instagram', FB: 'Facebook', XHS: '小红书' };
 
 const $ = id => document.getElementById(id);
 const fmt = n => n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'K' : String(n);
@@ -430,18 +466,46 @@ function toast(msg, ok) {
 }
 
 // filters
-const comps = [...new Set(DATA.map(d => d.competitor))].sort();
-comps.forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = '@'+c; $('fComp').appendChild(o); });
-[...new Set(DATA.map(d => d.tracker))].forEach(t => { const o = document.createElement('option'); o.value = t; o.textContent = t; $('fTracker').appendChild(o); });
+DATA.forEach(d => { d.ck = d.plat + '|' + d.competitor; });
+function fillComps() {
+  const keep = $('fComp').value, seen = {};
+  $('fComp').innerHTML = '<option value="">全部 Competitor</option>';
+  DATA.filter(d => !curPlat || d.plat === curPlat).forEach(d => { seen[d.ck] = d; });
+  Object.values(seen).sort((a, b) => (a.plat + a.name).localeCompare(b.plat + b.name)).forEach(d => {
+    const o = document.createElement('option'); o.value = d.ck;
+    o.textContent = '@' + d.name + (curPlat ? '' : ' · ' + (PLAT_LABEL[d.plat] || d.plat));
+    $('fComp').appendChild(o);
+  });
+  $('fComp').value = seen[keep] ? keep : '';
+}
+fillComps();
+
+function renderPlats() {
+  const plats = [...new Set(DATA.map(d => d.plat))];
+  ['IG', 'FB', 'XHS'].forEach(p => { if (!plats.includes(p)) plats.push(p); });
+  const order = { IG: 0, FB: 1, XHS: 2 };
+  plats.sort((a, b) => (order[a] ?? 9) - (order[b] ?? 9));
+  $('plats').innerHTML = '';
+  [''].concat(plats).forEach(p => {
+    const el = document.createElement('div');
+    el.className = 'plat' + (curPlat === p ? ' on' : '');
+    el.dataset.p = p;
+    const n = p ? DATA.filter(d => d.plat === p).length : DATA.length;
+    el.innerHTML = (p ? '<span class="dot"></span>' : '') + esc(p ? (PLAT_LABEL[p] || p) : '全部平台')
+      + ' <span class="cnt">' + n + '</span>';
+    el.onclick = () => { curPlat = p; fillComps(); shown = PAGE; render(); };
+    $('plats').appendChild(el);
+  });
+}
 
 function matchQ(d) {
   const q = ($('fSearch').value || '').trim().toLowerCase();
-  return !q || (d.caption + ' ' + (d.tags || '') + ' ' + (d.transcript || '') + ' ' + (d.brk || '') + ' ' + d.competitor).toLowerCase().includes(q);
+  return !q || (d.caption + ' ' + (d.tags || '') + ' ' + (d.transcript || '') + ' ' + (d.brk || '') + ' ' + d.competitor + ' ' + (d.name || '')).toLowerCase().includes(q);
 }
 
 function basePool() {
-  const t = $('fTracker').value, c = $('fComp').value;
-  return DATA.filter(d => (!t || d.tracker === t) && (!c || d.competitor === c) && (!videoOnly || d.video)
+  const c = $('fComp').value;
+  return DATA.filter(d => (!curPlat || d.plat === curPlat) && (!c || d.ck === c) && (!videoOnly || d.video)
     && matchQ(d) && PRESETS.every(p => !presetOn[p.k] || p.f(d)));
 }
 
@@ -482,12 +546,22 @@ function renderTabs() {
 const io = new IntersectionObserver(entries => {
   entries.forEach(e => {
     if (e.isIntersecting) {
-      const el = e.target, pid = el.dataset.pid;
-      if (!el.querySelector('iframe')) {
-        const f = document.createElement('iframe');
-        f.src = 'https://www.instagram.com/p/' + pid + '/embed/';
-        f.loading = 'lazy'; f.allow = 'autoplay; encrypted-media';
-        el.appendChild(f);
+      const el = e.target, d = byRec[el.dataset.pid];
+      if (d && !el.querySelector('iframe') && !el.dataset.done) {
+        el.dataset.done = '1';
+        if (d.plat === 'XHS') fillXhs(el, d);
+        else {
+          const f = document.createElement('iframe');
+          if (d.plat === 'FB') {
+            const vid = d.video && /\/(reel|videos|watch)/.test(d.url);
+            f.src = 'https://www.facebook.com/plugins/' + (vid ? 'video' : 'post') + '.php?href='
+              + encodeURIComponent(d.url) + '&show_text=true&width=500';
+          } else {
+            f.src = 'https://www.instagram.com/p/' + d.id + '/embed/';
+          }
+          f.loading = 'lazy'; f.allow = 'autoplay; encrypted-media; clipboard-write';
+          el.appendChild(f);
+        }
       }
       io.unobserve(el);
     }
@@ -504,11 +578,31 @@ async function setStatus(d, val) {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     d.status = val;
     cacheStatus(d.id, val);
-    toast('✓ @' + d.competitor + ' 已移到「' + val + '」', true);
+    toast('✓ @' + d.name + ' 已移到「' + val + '」', true);
   } catch (e) {
     toast('更新失败: ' + e.message + (String(e.message).includes('401') || String(e.message).includes('403') ? ' — 密钥无效?' : ''), false);
   }
   render();
+}
+
+// 小红书 blocks iframes: show the cover (no-referrer gets past the hotlink
+// check), the title on top, and open the real note on click.
+function fillXhs(el, d) {
+  const a = document.createElement('a');
+  a.href = d.url; a.target = '_blank'; a.rel = 'noopener';
+  const title = (d.caption || '').split(String.fromCharCode(10))[0];
+  const fallback = () => { a.innerHTML = '<div class="xnone">' + esc(title || '打开小红书笔记') + '</div>'; };
+  if (d.thumb) {
+    const img = document.createElement('img');
+    img.referrerPolicy = 'no-referrer'; img.loading = 'lazy'; img.alt = '';
+    img.src = d.thumb.replace(/^http:/, 'https:');
+    img.onerror = fallback;
+    a.appendChild(img);
+    if (d.video) a.insertAdjacentHTML('beforeend', '<div class="play">' + I('video') + '</div>');
+    if (title) a.insertAdjacentHTML('beforeend', '<div class="xtitle">' + esc(title.slice(0, 60)) + '</div>');
+  } else fallback();
+  const ph = el.querySelector('.ph'); if (ph) ph.remove();
+  el.appendChild(a);
 }
 
 function card(d, idx) {
@@ -534,11 +628,12 @@ function card(d, idx) {
   const hook = lines[0] || '';
   const tr = (d.transcript && d.transcript !== '(转录失败)' && d.transcript !== '(无口播内容)') ? d.transcript : '';
   el.innerHTML = `
-    <div class="embed" data-pid="${d.id}"><div class="ph"><svg class="ic"><use href="#i-${typeIcon}"/></svg></div></div>
+    <div class="embed ${d.plat === 'XHS' ? 'xhs' : ''}" data-pid="${esc(d.id)}"><div class="ph"><svg class="ic"><use href="#i-${typeIcon}"/></svg></div></div>
     <div class="meta">
       <div class="row1">
         <span class="handle" title="拖到上方 tab 即可归类">${I('grip')}</span>
-        <a class="who" href="https://www.instagram.com/${d.competitor}/" target="_blank">@${d.competitor}</a>
+        <a class="who" href="${esc(d.prof)}" target="_blank">@${esc(d.name)}</a>
+        <span class="badge p${d.plat}">${esc(PLAT_LABEL[d.plat] || d.plat)}</span>
         <span class="badge">${d.type || '-'}</span>
         ${days !== null && days <= 7 ? '<span class="badge bnew">' + I('star') + '新帖</span>' : ''}
         ${horse ? '<span class="badge bhorse">' + I('zap') + '黑马</span>' : ''}
@@ -561,7 +656,7 @@ function card(d, idx) {
         ${tr ? '<button class="abtn mic" title="复制视频口播逐字稿">' + I('mic') + '口播</button>' : ''}
         ${d.my ? '<button class="abtn minec" title="复制我的改写口播稿(可直接拍)">' + I('mic') + '我的稿</button>' : ''}
         <button class="abtn brief" title="复制拍摄 Brief(数据+Hook+AI拆解+我的稿+口播稿+文案)">${I('clip')}Brief</button>
-        <a class="abtn" href="${d.url}" target="_blank" title="打开 Instagram 原帖">${I('ext')}</a></div>
+        <a class="abtn" href="${esc(d.url)}" target="_blank" title="打开 ${PLAT_LABEL[d.plat] || ''} 原帖">${I('ext')}</a></div>
     </div>`;
   const capEl = el.querySelector('.cap');
   const restTxt = lines.slice(1).join('\\n');
@@ -584,7 +679,7 @@ function card(d, idx) {
     navigator.clipboard.writeText(d.my).then(() => toast('✓ 我的改写稿已复制', true));
   el.querySelector('.brief').onclick = () => {
     const NL = String.fromCharCode(10);
-    const parts = ['🎬 爆款参考 @' + d.competitor + ((d.x || 0) >= 2 ? '(自家平均 ×' + d.x + ')' : ''),
+    const parts = ['🎬 爆款参考 [' + (PLAT_LABEL[d.plat] || d.plat) + '] @' + d.name + ((d.x || 0) >= 2 ? '(自家平均 ×' + d.x + ')' : ''),
       '📊 🔥' + d.score + ' | ER ' + d.er + '% | ❤️ ' + (d.likes > 0 ? fmt(d.likes) : '隐藏') +
       ' | 💬 ' + fmt(d.comments) + ' | 👥 ' + fmt(d.followers) + (ago ? ' | ' + ago : ''),
       '🔗 ' + d.url, '✍️ Hook: ' + hook];
@@ -599,6 +694,7 @@ function card(d, idx) {
 }
 
 function render() {
+  renderPlats();
   renderTabs();
   const arr = filtered();
   const grid = $('grid'); grid.innerHTML = '';
@@ -641,7 +737,7 @@ async function refreshStatuses() {
   } catch (e) {}
 }
 
-['fTracker','fComp','fSort'].forEach(id => $(id).onchange = () => { shown = PAGE; render(); });
+['fComp','fSort'].forEach(id => $(id).onchange = () => { shown = PAGE; render(); });
 $('fSearch').oninput = () => { shown = PAGE; render(); };
 $('fVideo').onclick = () => { videoOnly = !videoOnly; $('fVideo').classList.toggle('on', videoOnly); shown = PAGE; render(); };
 $('moreBtn').onclick = () => { shown += PAGE; render(); };
@@ -898,8 +994,8 @@ TEAM_TEMPLATE = """<!DOCTYPE html>
       <h3><svg class="ic"><use href="#i-user"/></svg>SOP-05 · 竞对名单管理(发现好账号就加进来)</h3>
       <ol>
         <li>打开 Supabase「<b>competitors</b>」表,加一行</li>
-        <li><b>Username</b>:贴账号名或 IG <b>主页</b>链接都行(带 ?igsh= 参数没关系;不要贴帖子链接)</li>
-        <li><b>Tracker</b>:选 IG Competitors 或 AI Competitors</li>
+        <li><b>Username</b>:贴账号名或<b>主页</b>链接都行(IG 主页 / Facebook 专页 / 小红书 user/profile 链接;不要贴单条帖子链接)</li>
+        <li><b>Tracker</b>:填 <b>IG</b>(Instagram)、<b>FB</b>(Facebook 专页)或 <b>XHS</b>(小红书)</li>
         <li><b>Active</b>:打勾✅ — <b>没勾不会抓</b></li>
         <li>每周一自动生效;停止追踪 = 取消勾,不用删行</li>
       </ol>
@@ -1029,7 +1125,7 @@ async function setStatus(d, val) {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     d.status = val;
     cacheStatus(d.id, val);
-    toast('✓ @' + d.competitor + ' → ' + val, true);
+    toast('✓ @' + d.name + ' → ' + val, true);
   } catch (e) {
     toast('失败: ' + e.message, false);
   }
@@ -1054,7 +1150,7 @@ function renderWork() {
   if (!shoot.length) sl.innerHTML = '<div class="none">队列是空的 — Marketer 去爆款雷达挑几条拖进「拍摄中」</div>';
   shoot.forEach(d => {
     const r = document.createElement('div'); r.className = 'row';
-    r.innerHTML = '<a class="who2" href="https://www.instagram.com/' + d.competitor + '/" target="_blank">@' + esc(d.competitor) + '</a>'
+    r.innerHTML = '<a class="who2" href="' + esc(d.prof) + '" target="_blank">@' + esc(d.name) + '</a><span class="xb">' + esc(d.tracker) + '</span>'
       + ((d.x || 0) >= 2 ? '<span class="xb">×' + d.x + '</span>' : '')
       + '<span class="hookline">' + esc(firstLine(d.caption)) + '</span>'
       + '<a class="pill" href="' + d.url + '" target="_blank">' + I('ext') + '原帖</a>'
@@ -1072,7 +1168,7 @@ function renderWork() {
   picks.forEach(d => {
     const r = document.createElement('div'); r.className = 'row';
     r.innerHTML = '<span class="xb">×' + d.x + '</span>'
-      + '<a class="who2" href="https://www.instagram.com/' + d.competitor + '/" target="_blank">@' + esc(d.competitor) + '</a>'
+      + '<a class="who2" href="' + esc(d.prof) + '" target="_blank">@' + esc(d.name) + '</a><span class="xb">' + esc(d.tracker) + '</span>'
       + '<span class="hookline">' + esc(firstLine(d.caption))
       + '<small>🔥' + d.score + ' · ER ' + d.er + '% · 💬' + fmt(d.comments) + '</small></span>'
       + '<a class="pill" href="' + d.url + '" target="_blank">' + I('ext') + '原帖</a>'
@@ -1158,9 +1254,10 @@ def main():
     # later brings the whole history with it.
     active = fetch_active_handles(svc)
     if active is not None:
-        kept = [p for p in unique if _handle(p["competitor"]) in active]
-        dropped = sorted({p["competitor"] for p in unique
-                          if _handle(p["competitor"]) not in active})
+        key = lambda p: (p["plat"], handle(p["competitor"], p["plat"]))
+        kept = [p for p in unique if key(p) in active]
+        dropped = sorted({p["plat"] + ":" + p["name"] for p in unique
+                          if key(p) not in active})
         if kept:
             if dropped:
                 print("  hidden (active not ticked): " + ", ".join(dropped))
@@ -1170,15 +1267,19 @@ def main():
             print("  WARNING: that would hide every post - skipping the active "
                   "filter. Check the usernames in the competitors table.")
 
-    # outlier multiplier: post score vs the account's own median score
+    # outlier multiplier: post vs the account's own median. Uses weighted
+    # engagement (likes + comments*3) — identical to the score ratio when the
+    # follower count is known, and still works for FB/XHS accounts whose
+    # follower count could not be scraped (viral_score is null there).
     import statistics
     by_comp = {}
+    w = lambda p: (p["likes"] or 0) + (p["comments"] or 0) * 3
     for p in unique:
-        by_comp.setdefault(p["competitor"], []).append(p["score"] or 0)
+        by_comp.setdefault((p["plat"], p["competitor"]), []).append(w(p))
     for p in unique:
-        scores = [s for s in by_comp[p["competitor"]] if s > 0]
-        med = statistics.median(scores) if len(scores) >= 3 else 0
-        p["x"] = round((p["score"] or 0) / med, 1) if med > 0 else 0
+        vals = [v for v in by_comp[(p["plat"], p["competitor"])] if v > 0]
+        med = statistics.median(vals) if len(vals) >= 3 else 0
+        p["x"] = round(w(p) / med, 1) if med > 0 else 0
 
     # trending hashtags among outlier posts
     from collections import Counter

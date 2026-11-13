@@ -2,7 +2,8 @@
 """
 Video Transcription — Supabase edition
 ---------------------------------------
-Downloads recently-synced reels and transcribes them with local Whisper,
+Downloads recently-synced videos (IG reels, 小红书 videos, FB when a
+file URL is available) and transcribes them with local Whisper,
 writing transcripts to the Supabase `posts` table.
 
 A transcript is saved in its own step: if Whisper succeeded, a failed write
@@ -64,7 +65,10 @@ def save_transcript(post_id, text):
 
 
 def download(url, path):
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    headers = {"User-Agent": "Mozilla/5.0"}
+    if "xhscdn" in url or "xiaohongshu" in url:
+        headers["Referer"] = "https://www.xiaohongshu.com/"  # 小红书 CDN checks it
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=120) as resp, open(path, "wb") as f:
         while True:
             chunk = resp.read(1 << 16)

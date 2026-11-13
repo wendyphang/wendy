@@ -11,8 +11,9 @@
 create table if not exists posts (
   id              bigint generated always as identity primary key,
   post_id         text unique not null,
-  tracker         text not null default 'IG',
+  tracker         text not null default 'IG',      -- 平台:IG / FB / XHS(小红书)
   competitor      text,
+  author_name     text,                            -- 显示用昵称(小红书账号 ID 是一串乱码,靠它显示名字)
   caption         text,
   transcript      text,                            -- 视频口播稿(自动转录)
   ai_breakdown    text,                            -- AI 拆解(自动生成)
@@ -69,6 +70,10 @@ create unique index if not exists competitors_username_uniq
 -- 老版本升级:补上「我的稿」这一列(新装的已经有了,重跑没副作用)
 alter table posts add column if not exists my_script text;
 
+-- 多平台升级(IG + Facebook + 小红书):补上昵称列(重跑没副作用)
+alter table posts add column if not exists author_name text;
+create index if not exists posts_tracker_idx on posts (tracker);
+
 -- status 白名单:公开 key 能改这一列,不锁死的话任何人可以往里塞任意长文本
 update posts set status = '未处理'
  where status is null or status not in ('未处理', '拍摄中', '已处理', '跳过');
@@ -102,10 +107,17 @@ create policy "anon read posts"    on posts for select to anon using (true);
 create policy "anon update status" on posts for update to anon using (true) with check (true);
 
 -- ============================================================
--- ↓↓↓ 全篇只有这 5 行要改:换成你要追踪的竞对 IG 账号 ↓↓↓
+-- ↓↓↓ 全篇只有最底下这几行要改:换成你要追踪的竞对账号 ↓↓↓
 --
---   只要账号名,不要 @,不要链接
---   ✅ nike        ❌ @nike        ❌ instagram.com/nike
+--   第二格 tracker 决定平台:
+--     'IG'  = Instagram   填账号名         ✅ nike   ❌ @nike
+--     'FB'  = Facebook    填专页名或专页链接 ✅ nike / https://www.facebook.com/nike
+--                         (只能抓「专页 Page」,个人账号抓不到)
+--     'XHS' = 小红书       填主页链接或用户 ID
+--                         ✅ https://www.xiaohongshu.com/user/profile/5d5a56c10000000001000813
+--                         (打开对方主页 → 复制浏览器网址;不要贴单条笔记链接)
+--
+--   不想追踪某个平台?删掉那几行就好,那个平台就不抓、不花钱。
 --
 --   想追踪更多?复制其中一行、改账号名即可(建议 8-15 个)
 --   重复跑不会报错,也不会产生重复竞对
@@ -115,5 +127,12 @@ insert into competitors (username, tracker, active) values
   ('换成竞对2', 'IG', true),
   ('换成竞对3', 'IG', true),
   ('换成竞对4', 'IG', true),
-  ('换成竞对5', 'IG', true)
+  ('换成竞对5', 'IG', true),
+  ('换成FB专页1', 'FB', true),
+  ('换成FB专页2', 'FB', true),
+  ('换成小红书主页链接1', 'XHS', true),
+  ('换成小红书主页链接2', 'XHS', true)
 on conflict do nothing;
+
+-- 上面没改掉的占位行不会被抓(找不到账号而已),但最好删掉,省一次 Apify 请求:
+delete from competitors where username like '换成%';

@@ -9,15 +9,37 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # IG = Instagram · FB = Facebook 专页 · XHS = 小红书
+        # competitors 表里没有某个平台的账号,那个平台就自动跳过,不花钱。
+        tracker: [IG, FB, XHS]
+    name: Sync ${{ matrix.tracker }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Sync competitors
+        # 一个平台抓失败(例如小红书被风控),不能挡住其他平台和后面的转录/网页更新
+        continue-on-error: true
         env:
-          TRACKER: IG
+          TRACKER: ${{ matrix.tracker }}
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          XHS_COOKIE: ${{ secrets.XHS_COOKIE }}            # 可选:小红书登录 Cookie,抓得更稳
+          MIN_ER: ${{ vars.MIN_ER }}
+          MIN_COMMENTS: ${{ vars.MIN_COMMENTS }}
+          MIN_ENGAGE: ${{ vars.MIN_ENGAGE }}
+          OUTLIER_X: ${{ vars.OUTLIER_X }}
+          TOP_N_PER_COMP: ${{ vars.TOP_N_PER_COMP }}
+          MAX_PER_COMP: ${{ vars.MAX_PER_COMP }}
+          DAYS_BACK: ${{ vars.DAYS_BACK }}
+          RESULTS_LIMIT: ${{ vars.RESULTS_LIMIT }}
+          FB_RESULTS_LIMIT: ${{ vars.FB_RESULTS_LIMIT }}
+          XHS_RESULTS_LIMIT: ${{ vars.XHS_RESULTS_LIMIT }}
+          XHS_ACTOR: ${{ vars.XHS_ACTOR }}
+          XHS_DETAILS: ${{ vars.XHS_DETAILS }}
         run: python sync_content.py

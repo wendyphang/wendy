@@ -1,8 +1,49 @@
 # 📡 爆款雷达 · 网页版(不用碰终端)
 
-每周自动抓竞对 IG 爆款 → 转录口播 → AI 拆解 → **改写成你自己语气的口播稿** → 生成可拖拽管理的 dashboard。
+每周自动抓竞对 **Instagram + Facebook + 小红书** 爆款 → 转录口播 → AI 拆解 → **改写成你自己语气的口播稿** → 生成可拖拽管理的 dashboard。
 
 **这个版本全程在网页上点鼠标就能装好,不用打任何指令。** 照下面 6 步走,约 20 分钟。
+
+---
+
+## 🆕 已经在用 IG 版?3 步加上 Facebook + 小红书
+
+1. **Supabase → SQL Editor**,贴这段 → Run(只加一列 + 加竞对,不会动你现有的数据):
+
+   ```sql
+   alter table posts add column if not exists author_name text;
+   create index if not exists posts_tracker_idx on posts (tracker);
+
+   insert into competitors (username, tracker, active) values
+     ('https://www.facebook.com/换成FB专页', 'FB', true),
+     ('https://www.xiaohongshu.com/user/profile/换成小红书用户ID', 'XHS', true)
+   on conflict do nothing;
+   ```
+2. (建议)仓库 Settings → Secrets → 加 `XHS_COOKIE`,见下面「小红书 Cookie」
+3. Actions → **Sync Content** → Run workflow。现在会同时跑 3 个平台,网页最上面多一排 **全部平台 / Instagram / Facebook / 小红书** 切换
+
+### 三个平台的差别
+
+| | Instagram | Facebook | 小红书 |
+|---|---|---|---|
+| competitors 表 `username` 填 | 账号名 `nike` | 专页名或专页链接(**只能是专页 Page**) | 主页链接 `xiaohongshu.com/user/profile/…` |
+| `tracker` 填 | `IG` | `FB` | `XHS` |
+| 卡片里 | 官方 embed 直接播 | 官方 embed 直接播 | 封面图,点开去小红书看(小红书不允许嵌入) |
+| 口播转录 | ✅ | ❌ FB 不给视频文件,AI 拆解用帖子文案 | ✅ 前 `XHS_DETAILS` 条视频笔记 |
+| 大概费用 | 约 $1/月(7 个竞对) | 约 $5 / 1000 帖 | **较贵**:约 $0.06/篇笔记,另加每个主页一次查粉丝 |
+
+> 💡 小红书默认每个账号只抓 20 篇(`XHS_RESULTS_LIMIT`),入选后再给前 20 篇抓完整正文(`XHS_DETAILS`)。3 个小红书竞对一周大约 $5-8,Apify 免费额度不够的话先只加 1-2 个试水。
+> 💡 小红书没有官方抓取工具,用的是社区 actor `zhorex/rednote-xiaohongshu-scraper`。哪天它坏了,到 Apify Store 搜 *rednote* 换一个,把名字填进 Variable `XHS_ACTOR`(格式 `作者~actor名`)即可。
+
+### 小红书 Cookie(可选,但强烈建议)
+
+小红书对没登录的抓取很严,不带 Cookie 常常抓到笔记但**拿不到笔记链接**(卡片只能跳到对方主页)。
+
+1. 用**小号**在电脑浏览器登录 xiaohongshu.com(不要用你的主号——Cookie 等于登录权限,会交给 Apify 上的第三方 actor)
+2. F12 → Network → 刷新 → 点任意一个 xiaohongshu.com 请求 → Request Headers 里 `Cookie:` 后面整串复制
+3. 仓库 Settings → Secrets and variables → Actions → New repository secret,名字 `XHS_COOKIE`,贴进去
+
+Cookie 大概几周会过期,抓到的小红书笔记又没链接了就重新拿一次。
 
 ---
 
@@ -31,19 +72,19 @@
 1. 到 supabase.com → **New project**(Region 选 Singapore,数据库密码自己存好)
 2. 左边点 **SQL Editor** → New query
 3. 打开你仓库里的 `schema.sql`,**整段复制**贴进去
-4. **全篇只改最底下这 5 行**,换成你要追踪的竞对 IG 账号:
+4. **全篇只改最底下那几行**,换成你要追踪的竞对账号(第二格是平台:`IG` / `FB` / `XHS`):
 
    ```sql
    insert into competitors (username, tracker, active) values
      ('换成竞对1', 'IG', true),
-     ('换成竞对2', 'IG', true),
-     ('换成竞对3', 'IG', true),
-     ('换成竞对4', 'IG', true),
-     ('换成竞对5', 'IG', true)
+     ...
+     ('换成FB专页1', 'FB', true),
+     ('换成小红书主页链接1', 'XHS', true),
+     ...
    on conflict do nothing;
    ```
 
-   ⚠️ **只要账号名**,不要 `@`,不要链接。填 `nike` 对,填 `@nike` 或 `instagram.com/nike` 抓不到。
+   ⚠️ IG **只要账号名**,不要 `@`。FB 填专页名或专页链接。小红书填主页链接(打开对方主页 → 复制网址)。不想追踪的平台,删掉那几行就不会抓、不花钱。
 
 5. 点 **Run**,看到 Success
 6. 左边点 **Table Editor**,确认 `posts` 和 `competitors` 两张表都在,`competitors` 里是你的 5 个竞对、`active` 都打了勾
@@ -81,6 +122,7 @@ Supabase 左下角 **Settings → API Keys**,复制三样(先放记事本):
 | `SUPABASE_SERVICE_ROLE_KEY` | 第 3 步的 **secret key**(变量名没改)|
 | `APIFY_TOKEN` | Apify → Settings → API & Integrations 里的 token |
 | `GEMINI_API_KEY` | aistudio.google.com → 左边 **Get API key** → **Create API key** → 复制(`AIza` 开头,免费) |
+| `XHS_COOKIE` | *(可选,追踪小红书才需要)* 见上面「小红书 Cookie」 |
 
 > `GEMINI_API_KEY` 是 AI 拆解和「我的稿」用的。免费档每天有次数上限,这个系统一周只用一百来次,够用;用完了隔天自动补。
 >
@@ -151,6 +193,8 @@ Supabase 左下角 **Settings → API Keys**,复制三样(先放记事本):
 |---|---|
 | 网页 404 | 先等首跑完整结束;再看 Actions 里有没有红色失败的 workflow |
 | 卡片上没有「我的稿」按钮(但有 AI 拆解) | ① 这条帖子没有口播稿也没有像样的文案,AI 没材料改;② 首跑还没跑到这一步,等下周或去 Actions → **Rewrite To My Voice** 手动跑;③ 老学员用旧 `schema.sql` 建的表没有 `my_script` 这一列——看 Actions 里 Analyze Posts 的日志,它会告诉你要贴的那一句 SQL |
+| 某个平台抓到 0 条 / 失败 | Actions → Sync Content 里每个平台是分开的(Sync IG / Sync FB / Sync XHS),点进那个平台看日志。FB 要填**专页**;小红书先检查主页链接,再加 `XHS_COOKIE` |
+| 小红书卡片点了只到对方主页 | 没带 Cookie,小红书没给笔记链接 → 加 `XHS_COOKIE` |
 | 抓到 0 条 | 打开 Actions → Sync Content 的日志,看那张**逐个账号的表格**:`抓到` 是 0 = 账号名拼错或 active 没勾;`抓到` 有数但 `入选` 是 0 = 门槛太严,照下面「内容太少怎么调」加 Variables |
 | 内容太少 | 见下面「内容太少怎么调」 |
 | AI 拆解空 / 没有「我的稿」 | ① Secrets 里没加 `GEMINI_API_KEY`(名字要一模一样);② Gemini 免费额度当天用完,隔天自动补;③ 看 Actions → **Analyze Posts** 的日志:第一行 `[Provider]` 是不是 gemini,每条后面 `FAILED: HTTP` 几 |
@@ -179,7 +223,11 @@ Supabase 左下角 **Settings → API Keys**,复制三样(先放记事本):
 | `TOP_N_PER_COMP` | `3` | `5` | 每个账号保底几条 |
 | `MAX_PER_COMP` | `15` | `25` | 每个账号最多几条 |
 | `DAYS_BACK` | `60` | `90` | 回看多少天(**不额外花钱**) |
-| `RESULTS_LIMIT` | `50` | `80` | 每个账号抓多少条(⚠️ **这个会加钱**) |
+| `RESULTS_LIMIT` | `50` | `80` | 每个 IG 账号抓多少条(⚠️ **这个会加钱**) |
+| `FB_RESULTS_LIMIT` | 同 `RESULTS_LIMIT` | `80` | 每个 FB 专页抓多少条(⚠️ **会加钱**) |
+| `XHS_RESULTS_LIMIT` | `20` | `40` | 每个小红书账号抓多少篇(⚠️ **会加钱,而且贵**) |
+| `XHS_DETAILS` | `20` | `40` / `0`=关 | 入选的小红书笔记里,前几篇抓完整正文+视频(⚠️ **会加钱**) |
+| `XHS_ACTOR` | `zhorex~rednote-xiaohongshu-scraper` | | 小红书用哪个 Apify actor |
 
 改完到 Actions → Sync Content → Run workflow 重跑即可。
 

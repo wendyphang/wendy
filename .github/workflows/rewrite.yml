@@ -1,0 +1,32 @@
+name: Rewrite To My Voice
+
+# 手动重跑「我的稿」。平时不用点 —— 每周 Analyze Posts 跑完会自动补新帖。
+# 什么时候来点:改了 brand_voice.md(换语气/人设),想把已经生成的稿子整批重刷。
+on:
+  workflow_dispatch:
+    inputs:
+      rewrite_all:
+        description: "改了 brand_voice.md 想整批重刷?填 1(留空 = 只补还没有稿的新帖)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  rewrite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Rewrite
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}         # 免费:Google AI Studio 拿
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}   # 可选,设了就优先用 Claude
+          NICHE: ${{ vars.NICHE }}
+          REWRITE_ALL: ${{ inputs.rewrite_all }}
+        run: python rewrite_posts.py

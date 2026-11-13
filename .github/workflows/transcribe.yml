@@ -1,0 +1,31 @@
+name: Transcribe Videos
+
+on:
+  workflow_run:
+    workflows: ["Sync Content"]
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  transcribe:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/whisper
+          key: whisper-small
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq || true
+          sudo apt-get install -y ffmpeg
+          pip -q install openai-whisper
+      - name: Transcribe
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python transcribe_videos.py
